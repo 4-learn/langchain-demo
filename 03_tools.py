@@ -17,8 +17,6 @@ load_dotenv()
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.tools import tool
-from langchain_core.prompts import ChatPromptTemplate
-from langchain.agents import create_tool_calling_agent, AgentExecutor
 
 
 # === 定義 Tool ===
@@ -64,7 +62,7 @@ def log_violation(description: str, location: str) -> str:
     return f"已記錄：{location} - {description}"
 
 
-# === Demo 1：bind_tools（手動） ===
+# === Demo 1：bind_tools（手動兩段式） ===
 
 def demo_bind_tools():
     print("=" * 50)
@@ -74,31 +72,41 @@ def demo_bind_tools():
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
     llm_with_tools = llm.bind_tools([search_regulation, send_alert, log_violation])
 
+    # 第一段：LLM 選擇要呼叫哪個 Tool
     response = llm_with_tools.invoke("幫我查安全帽的法規")
 
     print(f"\n  LLM 選擇的 Tool：")
     for tc in response.tool_calls:
         print(f"    {tc['name']}({tc['args']})")
 
+    # 第二段：你手動執行
+    if response.tool_calls:
+        tc = response.tool_calls[0]
+        tool_map = {
+            "search_regulation": search_regulation,
+            "send_alert": send_alert,
+            "log_violation": log_violation,
+        }
+        result = tool_map[tc["name"]].invoke(tc["args"])
+        print(f"\n  執行結果：{result}")
 
-# === Demo 2：AgentExecutor（自動） ===
 
-def demo_agent_executor():
+# === Demo 2：create_agent（自動執行） ===
+
+def demo_agent():
     print(f"\n{'=' * 50}")
-    print("  Demo 2：AgentExecutor（自動執行 Tool）")
+    print("  Demo 2：create_agent（自動執行 Tool）")
     print("=" * 50)
 
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
+    from langchain.agents import create_agent
+
     tools = [search_regulation, send_alert, log_violation]
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", "你是工安助手，可以查詢法規、發送告警、記錄違規。用繁體中文回答。"),
-        ("human", "{input}"),
-        ("placeholder", "{agent_scratchpad}"),
-    ])
-
-    agent = create_tool_calling_agent(llm, tools, prompt)
-    executor = AgentExecutor(agent=agent, tools=tools)
+    agent = create_agent(
+        "google_genai:gemini-2.5-flash",
+        tools=tools,
+        system_prompt="你是工安助手，可以查詢法規、發送告警、記錄違規。用繁體中文回答。",
+    )
 
     instructions = [
         "幫我查安全帽的法規",
@@ -107,10 +115,12 @@ def demo_agent_executor():
 
     for instruction in instructions:
         print(f"\n  指令：{instruction}")
-        result = executor.invoke({"input": instruction})
-        print(f"  回答：{result['output'][:150]}")
+        result = agent.invoke({"messages": [{"role": "user", "content": instruction}]})
+        # 取最後一條 AI 訊息
+        last_msg = result["messages"][-1]
+        print(f"  回答：{last_msg.content[:150]}")
 
 
 if __name__ == "__main__":
     demo_bind_tools()
-    demo_agent_executor()
+    demo_agent()
